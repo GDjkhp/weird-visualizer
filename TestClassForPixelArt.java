@@ -264,7 +264,7 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
                 int byteIndex1 = sampleIndex * 2 + 1;
                 // probably some library method for this, somewhere
 
-                BYTES[byteIndex0] = (byte)(audio[sampleIndex] & 0x000000FF);
+                BYTES[byteIndex0] = (byte)(audio[sampleIndex] & 0x000000FF >> 8);
                 BYTES[byteIndex1] = (byte)((audio[sampleIndex] & 0x0000FF00) >> 8);
             }
         }
