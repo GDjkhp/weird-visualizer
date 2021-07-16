@@ -39,7 +39,7 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
     int colorSize = 360;
 
     // intermediate buffer
-    static byte[] BYTES;
+    static byte[] BUFFER;
     // dump to file (never do this, see below)
     static FileOutputStream fos;
     
@@ -136,8 +136,8 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
 //        g.setColor(Color.DARK_GRAY);
 //        g.fillRect(0, 0, WIDTH, HEIGHT);
 
-        boolean stereo = false;
-        float[] pSample1 = bytesToFloats(BYTES);
+        boolean stereo = true;
+        float[] pSample1 = bytesToFloatsOld(BUFFER);
 
         // It will be stereo?
         /*if (stereo)
@@ -154,36 +154,52 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
 			System.out.println(pSample1[i]);
 		}*/
 
-        System.out.println(pSample1.length);
-
-
-        int yLast1 = (int) ((pSample1[0] / 48000) * (float) halfCanvasHeight)
-                + halfCanvasHeight;
-        int samIncrement1 = 1;
-        for (int a = samIncrement1, c = 0; c < canvasWidth; a += samIncrement1, c++) {
-            int yNow = (int) ((pSample1[a] / 48000) * (float) halfCanvasHeight)
-                    + halfCanvasHeight;
-            g.drawLine(c, yLast1, c + 1, yNow);
-            yLast1 = yNow;
-        }
-
         // Oscilloscope will be stereo
         if (stereo) {
+            pSample1 = bytesToFloats(BUFFER, 1);
+
+            // use this if problem above was fixed
+            g.setColor(Color.WHITE);
+
+            int yLast1 = (int) (pSample1[0] * (float) halfCanvasHeight)
+                    + halfCanvasHeight;
+            int samIncrement1 = 1;
+            for (int a = samIncrement1, c = 0; c < canvasWidth && a < pSample1.length; a += samIncrement1, c+=2) {
+                int yNow = (int) (pSample1[a] * (float) halfCanvasHeight)
+                        + halfCanvasHeight;
+                g.drawLine(c, yLast1, c + 1, yNow);
+                yLast1 = yNow;
+            }
+
             colorIndex = (colorIndex == colorSize - 1) ? 0 : colorIndex + 1;
             g.setColor(Color.getHSBColor((float) colorIndex / 360f, 1.0f, 1.0f));
 //			System.out.println(Color.getHSBColor((float) colorIndex / 360f, 1.0f, 1.0f) + ", colorIndex: " + colorIndex);
-            float[] pSample2 = pRightChannel;
+
+            float[] pSample2 = bytesToFloats(BUFFER, 2);
 
             int yLast2 = (int) (pSample2[0] * (float) halfCanvasHeight)
                     + halfCanvasHeight;
             int samIncrement2 = 1;
-            for (int a = samIncrement2, c = 0; c < canvasWidth; a += samIncrement2, c++) {
+            for (int a = samIncrement2, c = 0; c < canvasWidth && a < pSample2.length; a += samIncrement2, c+=2) {
                 int yNow = (int) (pSample2[a] * (float) halfCanvasHeight)
                         + halfCanvasHeight;
                 g.drawLine(c, yLast2, c + 1, yNow);
                 yLast2 = yNow;
             }
 
+        }
+
+        else {
+            // TODO: uhh i'm dum, i want to implement this
+            int yLast1 = (int) ((pSample1[0] / 48000) * (float) halfCanvasHeight)
+                    + halfCanvasHeight;
+            int samIncrement1 = 1;
+            for (int a = samIncrement1, c = 0; c < canvasWidth; a += samIncrement1, c++) {
+                int yNow = (int) ((pSample1[a] / 48000) * (float) halfCanvasHeight)
+                        + halfCanvasHeight;
+                g.drawLine(c, yLast1, c + 1, yNow);
+                yLast1 = yNow;
+            }
         }
         
         g.dispose();
@@ -231,7 +247,7 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
                             try(XtStream stream = device.openStream(deviceParams, null);
                                 var safeBuffer = XtSafeBuffer.register(stream, true)) {
                                 // max frames to enter onBuffer * channels * bytes per sample
-                                BYTES = new byte[stream.getFrames() * 2 * 2];
+                                BUFFER = new byte[stream.getFrames() * 2 * 2];
                                 // make filename valid
                                 String fileName = deviceName.replaceAll("[\\\\/:*?\"<>|]", "");
                                 try(FileOutputStream fos0 = new FileOutputStream(fileName + ".raw")) {
@@ -263,8 +279,8 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
                 int byteIndex1 = sampleIndex * 2 + 1;
                 // probably some library method for this, somewhere
 
-                BYTES[byteIndex0] = (byte)(audio[sampleIndex] & 0x000000FF >> 8);
-                BYTES[byteIndex1] = (byte)((audio[sampleIndex] & 0x0000FF00) >> 8);
+                BUFFER[byteIndex0] = (byte)(audio[sampleIndex] & 0x000000FF >> 8);
+                BUFFER[byteIndex1] = (byte)((audio[sampleIndex] & 0x0000FF00) >> 8);
             }
         }
 
@@ -298,11 +314,44 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
         return 0;
     }
 
-    float[] bytesToFloats(byte[] bytes){
+    float[] bytesToFloatsOld(byte[] bytes){
         float[] floats = new float[bytes.length / 2];
         for (int i = 0; i < bytes.length; i += 2){
             floats[i/2] = bytes[i] | (bytes[i+1] << 8);
         }
         return floats;
+    }
+
+    public static float[] bytesToFloats(byte[] bytes, int channel){
+        float[] floats = new float[bytes.length / 2];
+        for (int i = 0; i < bytes.length; i += 2){
+            floats[i/2] = (float)(bytes[i] | (bytes[i+1] << 8)) / 32767.0f;
+        }
+
+        int limit = 480;
+        float[] betterFloats = new float[floats.length / 2];
+        float[] clampToLimit = new float[limit];
+        if (channel == 1){
+            for (int i = 0, j = 0; i < floats.length; i+=2, j++){
+                betterFloats[j] = floats[i];
+            }
+        } else if (channel == 2){
+            for (int i = 1, j = 0; i < floats.length; i+=2, j++){
+                betterFloats[j] = floats[i];
+            }
+        } else if (channel == 0)
+            return floats;
+        for (int i = 0; i < limit; i++){
+            clampToLimit[i] = betterFloats[i];
+        }
+
+        // find two zero
+        /*for (int i = 0; i < betterFloats.length; i++){
+            if (i != 0 && betterFloats[i - 1] != 0 && betterFloats[i] == 0 && betterFloats[i + 1] == 0){
+                System.out.println("index " + i + " afterwards fucks up the array");
+            }
+        }*/
+
+        return clampToLimit; // TODO: must return channel
     }
 }
