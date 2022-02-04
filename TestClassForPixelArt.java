@@ -10,7 +10,10 @@ import xt.audio.*;
 import java.awt.*;
 import java.awt.image.BufferStrategy;
 import java.io.FileOutputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.List;
 
 /**
  *
@@ -44,10 +47,63 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
     static FileOutputStream fos;
     
     public TestClassForPixelArt() throws Exception {
-        // window
-        new windowModified_(WIDTH, HEIGHT, "game_", this);
         /*audioplayer_.load("");
         audioplayer_.getMusic("dead_meme").loop();*/
+
+        // this initializes platform dependent stuff like COM
+        try(XtPlatform platform = XtAudio.init(null, Pointer.NULL)) {
+            // works on windows only, obviously
+            XtService service = platform.getService(Enums.XtSystem.WASAPI);
+            // list input devices (this includes loopback)
+            try(XtDeviceList list = service.openDeviceList(EnumSet.of( Enums.XtEnumFlags.INPUT))) {
+                for(int i = 0; i < list.getCount(); i++) {
+                    String deviceId = list.getId(i);
+                    EnumSet<Enums.XtDeviceCaps> caps = list.getCapabilities(deviceId);
+                    // filter loopback devices
+                    if(caps.contains(Enums.XtDeviceCaps.LOOPBACK)) {
+                        String deviceName = list.getName(deviceId);
+                        // just to check what output we're recording
+                        System.out.println(deviceName);
+                        // open device
+                        try(XtDevice device = service.openDevice(deviceId)) {
+                            // 16 bit 48khz
+                            Structs.XtMix mix = new Structs.XtMix(48000, Enums.XtSample.INT16);
+                            // 2 channels input, no masking
+                            Structs.XtChannels channels = new Structs.XtChannels(2, 0, 0, 0);
+                            // final audio format
+                            Structs.XtFormat format = new Structs.XtFormat(mix, channels);
+                            // query min/max/default buffer sizes
+                            Structs.XtBufferSize bufferSize = device.getBufferSize(format);
+                            // true->interleaved, onBuffer->audio stream callback
+                            Structs.XtStreamParams streamParams = new Structs.XtStreamParams(true, TestClassForPixelArt::onBuffer, null, null);
+                            // final initialization params with default buffer size
+                            Structs.XtDeviceStreamParams deviceParams = new Structs.XtDeviceStreamParams(streamParams, format, bufferSize.current);
+                            // run stream
+                            // safe buffer allows you to get java short[] instead on jna Pointer in the callback
+                            try(XtStream stream = device.openStream(deviceParams, null);
+                                XtSafeBuffer safeBuffer = XtSafeBuffer.register(stream, true)) {
+                                // max frames to enter onBuffer * channels * bytes per sample
+                                BUFFER = new byte[stream.getFrames() * 2 * 2];
+                                // run for 1 second
+                                stream.start();
+                                runThis();
+                                Thread.sleep(1000000000);
+
+                                // ignore the following, record shit
+                                // make filename valid
+                                String fileName = deviceName.replaceAll("[\\\\/:*?\"<>|]", "");
+                                try(FileOutputStream fos0 = new FileOutputStream(fileName + ".raw")) {
+                                    // make filestream accessible to the callback
+                                    // could also be done by passsing as userdata to openStream
+                                    // fos = fos0;
+                                    // run for 1 second
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     
     public void run() {
@@ -78,11 +134,24 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
         }
         stop();
     }
-    
-    public synchronized void start() throws Exception {
-        thread = new Thread(this);
-        thread.start();
+
+    boolean gui = true;
+
+    public synchronized void start() {
+        if (gui){
+            // remove this for no gui setup
+            thread = new Thread(this);
+            thread.start();
+        }
         running = true;
+    }
+
+    public void runThis() throws Exception {
+        if (gui){
+            // window
+            new windowModified_(WIDTH, HEIGHT, "game_", this);
+        }
+        start();
     }
     
     public synchronized void stop() {
@@ -96,6 +165,200 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
     
     public void tick() {
 
+    }
+
+    // render 3D stuff
+
+    // TODO: cube data, compile it as class
+
+    float s = 100;
+
+    Point3D p1 = new Point3D(s/2, -s/2, -s/2);
+    Point3D p2 = new Point3D(s/2, s/2, -s/2);
+    Point3D p3 = new Point3D(s/2, s/2, s/2);
+    Point3D p4 = new Point3D(s/2, -s/2, s/2);
+    Point3D p5 = new Point3D(-s/2, -s/2, -s/2);
+    Point3D p6 = new Point3D(-s/2, s/2, -s/2);
+    Point3D p7 = new Point3D(-s/2, s/2, s/2);
+    Point3D p8 = new Point3D(-s/2, -s/2, s/2);
+
+    // cube
+    Tetrahedron tetra = new Tetrahedron(
+            new Polygon3D(Color.red, p1, p2, p3, p4),
+            new Polygon3D(Color.orange, p5, p6, p7, p8),
+            new Polygon3D(Color.yellow, p1, p2, p6, p5),
+            new Polygon3D(Color.green, p1, p5, p8, p4),
+            new Polygon3D(Color.blue, p2, p6, p7, p3),
+            new Polygon3D(Color.magenta, p4, p3, p7, p8)
+    );
+
+    class Tetrahedron {
+        Polygon3D[] poly;
+
+        public Tetrahedron(Polygon3D... polygons){
+            poly = polygons;
+            sortPolygons(poly);
+        }
+
+        public void render(Graphics g, boolean fill){
+            for (Polygon3D polygon : poly)
+                polygon.render(g, fill);
+        }
+
+        public void rotate(boolean CW, float xDegrees, float yDegrees, float zDegrees){
+            for(Polygon3D p : poly)
+                p.rotate(CW, xDegrees, yDegrees, zDegrees);
+            sortPolygons(poly);
+        }
+
+        public void sortPolygons(Polygon3D[] p){
+            List<Polygon3D> polyList = new ArrayList<>(Arrays.asList(p));
+
+            // FIXME: Comparison method violates its general contract!
+            polyList.sort(((o1, o2) -> o2.getAverageX() - o1.getAverageX() < 0 ? 1 : -1));
+
+            for (int i = 0; i < p.length; i++){
+                p[i] = polyList.get(i);
+            }
+        }
+    }
+
+    class Polygon3D {
+        Point3D[] points;
+        Color color = Color.WHITE;
+
+        public Polygon3D(Color col, Point3D... points){
+            color = col;
+            this.points = new Point3D[points.length];
+            for (int i = 0; i < points.length; i++){
+                Point3D p = points[i];
+                this.points[i] = new Point3D(p.x, p.y, p.z);
+            }
+        }
+
+        public void render(Graphics g, boolean fill){
+            Polygon poly = new Polygon();
+            for (int i = 0; i < points.length; i++){
+                Point p = PointConverter.convertPoint(points[i]);
+                poly.addPoint(p.x, p.y);
+            }
+            g.setColor(color);
+            if (fill)
+                g.fillPolygon(poly);
+            else g.drawPolygon(poly);
+            // TODO: draw some img here, hint: affine transform
+            /*g.drawImage(assets_.juni,
+                    poly.xpoints[0], poly.ypoints[0], poly.xpoints[2], poly.ypoints[2],
+                    0, 0, 32, 32, null);*/
+
+            /*// more test
+            Graphics2D g2d = (Graphics2D)g;
+            AffineTransform at = g2d.getTransform();
+
+            // image mapping
+            double[] imgSrc = {0, 0, 0, 32, 32, 32, 32, 0};
+            double[] destSrc = {poly.xpoints[0], poly.ypoints[0],
+                    poly.xpoints[1], poly.ypoints[1],
+                    poly.xpoints[2], poly.ypoints[2],
+                    poly.xpoints[3], poly.ypoints[3]};
+
+            // transform
+            at.deltaTransform(PointConverter.convertPoint(points[0]), PointConverter.convertPoint(points[2]));
+            g.drawImage(assets_.juni, poly.xpoints[0], poly.ypoints[0], null);
+            at.deltaTransform(imgSrc, 0, destSrc, 0, 4);
+            g2d.setTransform(at);*/
+        }
+
+        public void rotate(boolean CW, float xDegrees, float yDegrees, float zDegrees){
+            for (Point3D p : points){
+                PointConverter.rotateAxisX(p, CW, xDegrees);
+                PointConverter.rotateAxisY(p, CW, yDegrees);
+                PointConverter.rotateAxisZ(p, CW, zDegrees);
+            }
+        }
+
+        public float getAverageX(){
+            float sum = 0;
+            for(Point3D p : points){
+                sum += p.x;
+            }
+            return sum / points.length;
+        }
+
+        public void setColor(Color col){
+            color = col;
+        }
+    }
+
+    class Point3D {
+        public float x, y, z;
+
+        public Point3D(float x, float y, float z){
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+    }
+
+    static class PointConverter{
+        public static float scale = 1;
+        public static float zoomFactor = 1.2f;
+        public static Point centerPoint = new Point(WIDTH / 2, HEIGHT / 2);
+
+        public static Point convertPoint(Point3D point3D){
+            float x3d = point3D.y * scale;
+            float y3d = point3D.z * scale;
+            float depth = point3D.x * scale;
+            Point newVal = scale(x3d, y3d, depth);
+
+            // vanishing point, where (0, 0) was mapped, pass this as params
+            // (WIDTH / 2 + x, HEIGHT / 2 - y) == CENTER
+            int x2d = centerPoint.x + newVal.x;
+            int y2d = centerPoint.y - newVal.y;
+
+            return new Point(x2d, y2d);
+        }
+
+        public static Point scale(float x3d, float y3d, float depth){
+            float dist = (float)Math.sqrt(x3d * x3d + y3d * y3d);
+            float theta = (float)(Math.atan2(y3d, x3d));
+            float depth2 = 15 - depth;
+            float localScale = Math.abs(1400/(depth2+1400));
+            dist *= localScale;
+            return new Point((int)(dist * Math.cos(theta)), (int)(dist * Math.sin(theta)));
+        }
+
+        public static void rotateAxisX(Point3D p, boolean CW, float degrees){
+            float radius = (float) Math.sqrt(p.y * p.y + p.z * p.z);
+            float theta = (float) Math.atan2(p.y, p.z);
+            theta += 2 * Math.PI / 360 * degrees * (CW ? -1 : 1);
+            p.y = (float)(radius * Math.sin(theta));
+            p.z = (float)(radius * Math.cos((theta)));
+        }
+
+        public static void rotateAxisY(Point3D p, boolean CW, float degrees){
+            float radius = (float) Math.sqrt(p.x * p.x + p.z * p.z);
+            float theta = (float) Math.atan2(p.x, p.z);
+            theta += 2 * Math.PI / 360 * degrees * (CW ? -1 : 1);
+            p.x = (float)(radius * Math.sin(theta));
+            p.z = (float)(radius * Math.cos((theta)));
+        }
+
+        public static void rotateAxisZ(Point3D p, boolean CW, float degrees){
+            float radius = (float) Math.sqrt(p.y * p.y + p.x * p.x);
+            float theta = (float) Math.atan2(p.y, p.x);
+            theta += 2 * Math.PI / 360 * degrees * (CW ? -1 : 1);
+            p.y = (float)(radius * Math.sin(theta));
+            p.x = (float)(radius * Math.cos((theta)));
+        }
+
+        public static void zoomIn(){
+            scale *= zoomFactor;
+        }
+
+        public static void zoomOut(){
+            scale /= zoomFactor;
+        }
     }
     
     public void render() {
@@ -154,6 +417,9 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
 			System.out.println(pSample1[i]);
 		}*/
 
+        // g.drawString(Arrays.toString(bytesToFloats(BUFFER, 1)), 50, 50);
+        // g.drawString(Arrays.toString(bytesToFloats(BUFFER, 2)), 50, 100);
+
         // Oscilloscope will be stereo
         if (stereo) {
             pSample1 = bytesToFloats(BUFFER, 1);
@@ -201,9 +467,27 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
                 yLast1 = yNow;
             }
         }
+
+        // boogie beats
+        beatReact();
+        // rotate stuff for new 3D
+        tetra.rotate(false, 0, 1, 1);
+        // render cube
+        tetra.render(g, true);
         
         g.dispose();
         bs.show();
+    }
+
+    public void beatReact() {
+        float size = 2;
+        float[] values = stereoMerge(bytesToFloats(BUFFER, 1), bytesToFloats(BUFFER, 2));
+        float mean = 0;
+        for (float i = 0.0f; i < 480.0f; i++) {
+            mean += values[(int) i];
+        }
+        mean /= 480.0f;
+        PointConverter.scale = size + size * 2 * Math.abs(mean);
     }
 
     public float[] stereoMerge(float[] pLeft, float[] pRight) {
@@ -214,57 +498,7 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
     }
 
     public static void main(String[] args) throws Exception {
-        // this initializes platform dependent stuff like COM
-        try(XtPlatform platform = XtAudio.init(null, Pointer.NULL, null)) {
-            // works on windows only, obviously
-            XtService service = platform.getService(Enums.XtSystem.WASAPI);
-            // list input devices (this includes loopback)
-            try(XtDeviceList list = service.openDeviceList(EnumSet.of( Enums.XtEnumFlags.INPUT))) {
-                for(int i = 0; i < list.getCount(); i++) {
-                    String deviceId = list.getId(i);
-                    EnumSet<Enums.XtDeviceCaps> caps = list.getCapabilities(deviceId);
-                    // filter loopback devices
-                    if(caps.contains(Enums.XtDeviceCaps.LOOPBACK)) {
-                        String deviceName = list.getName(deviceId);
-                        // just to check what output we're recording
-                        System.out.println(deviceName);
-                        // open device
-                        try(XtDevice device = service.openDevice(deviceId)) {
-                            // 16 bit 48khz
-                            Structs.XtMix mix = new Structs.XtMix(48000, Enums.XtSample.INT16);
-                            // 2 channels input, no masking
-                            Structs.XtChannels channels = new Structs.XtChannels(2, 0, 0, 0);
-                            // final audio format
-                            Structs.XtFormat format = new Structs.XtFormat(mix, channels);
-                            // query min/max/default buffer sizes
-                            Structs.XtBufferSize bufferSize = device.getBufferSize(format);
-                            // true->interleaved, onBuffer->audio stream callback
-                            Structs.XtStreamParams streamParams = new Structs.XtStreamParams(true, TestClassForPixelArt::onBuffer, null, null);
-                            // final initialization params with default buffer size
-                            Structs.XtDeviceStreamParams deviceParams = new Structs.XtDeviceStreamParams(streamParams, format, bufferSize.current);
-                            // run stream
-                            // safe buffer allows you to get java short[] instead on jna Pointer in the callback
-                            try(XtStream stream = device.openStream(deviceParams, null);
-                                var safeBuffer = XtSafeBuffer.register(stream, true)) {
-                                // max frames to enter onBuffer * channels * bytes per sample
-                                BUFFER = new byte[stream.getFrames() * 2 * 2];
-                                // make filename valid
-                                String fileName = deviceName.replaceAll("[\\\\/:*?\"<>|]", "");
-                                try(FileOutputStream fos0 = new FileOutputStream(fileName + ".raw")) {
-                                    // make filestream accessible to the callback
-                                    // could also be done by passsing as userdata to openStream
-//                                    fos = fos0;
-                                    // run for 1 second
-                                    stream.start();
-                                    new TestClassForPixelArt();
-                                    Thread.sleep(1000000000);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        new TestClassForPixelArt();
     }
 
     static void processAudio(short[] audio, int frames) throws Exception {
@@ -279,7 +513,7 @@ public class TestClassForPixelArt extends Canvas implements Runnable {
                 int byteIndex1 = sampleIndex * 2 + 1;
                 // probably some library method for this, somewhere
 
-                BUFFER[byteIndex0] = (byte)(audio[sampleIndex] & 0x000000FF >> 8);
+                BUFFER[byteIndex0] = (byte)((audio[sampleIndex] & 0x000000FF) >> 8);
                 BUFFER[byteIndex1] = (byte)((audio[sampleIndex] & 0x0000FF00) >> 8);
             }
         }
